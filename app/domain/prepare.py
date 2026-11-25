@@ -37,9 +37,23 @@ def _typed(rows):
     return typed, issues
 
 
-def prepare_rows(rows):
+def _apply_pause(item, pauses):
+    """用有效凭据覆盖声明的暂停时长；无效凭据抛出对应原因码。"""
+    if not pauses:
+        return
+    key = item.get(SPEC["key"])
+    if key in pauses.get("invalid", {}):
+        raise ValueError(pauses["invalid"][key])
+    if key in pauses.get("hours", {}):
+        item["paused_hours"] = pauses["hours"][key]
+        item["_pause_source"] = "credential"
+        item["_pause_ref"] = pauses.get("refs", {}).get(key, "")
+    else:
+        item["_pause_source"] = "declared"
+
+
+def prepare_rows(rows, pauses=None):
     typed, issues = _typed(rows)
-    rows = typed
     items = []
     for item in typed:
         try:
@@ -47,6 +61,7 @@ def prepare_rows(rows):
                 raise ValueError("KEY_MISSING")
             if item["delivered_at"] < item["pickup_at"]:
                 raise ValueError("DELIVERED_BEFORE_PICKUP")
+            _apply_pause(item, pauses)
             if item["paused_hours"] < 0:
                 raise ValueError("BAD_PAUSE")
             if item["declared_value_cents"] < 0:

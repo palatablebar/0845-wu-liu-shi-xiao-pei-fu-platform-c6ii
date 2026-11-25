@@ -27,12 +27,19 @@
       <div class="panel-head"><h2>运行对账</h2></div>
       <div class="ledger" id="ledger-list"></div>
     </article>
+    <article class="panel" id="panel-version">
+      <div class="panel-head"><h2>来源与版本</h2><span class="hint" id="freeze-state">草稿</span></div>
+      <div class="ledger" id="version-list"></div>
+    </article>
     <article class="panel" id="panel-review">
       <div class="panel-head"><h2>批次复核</h2><span class="hint" id="revision">rev 0</span></div>
       <div class="review">
         <label for="comment">复核意见</label>
         <textarea id="comment" placeholder="核验来源、边界与批次结论"></textarea>
+        <label for="credential">暂停凭据（运单号:小时，逗号分隔）</label>
+        <textarea id="credential" placeholder="W1:3, W2:0"></textarea>
         <div class="review-actions">
+          <button id="credential-apply" type="button" disabled>补录凭据</button>
           <button id="sign" type="button" disabled>签发</button>
           <button id="hold" type="button" disabled>暂缓</button>
           <a id="download" href="#" download hidden>下载复核证据</a>

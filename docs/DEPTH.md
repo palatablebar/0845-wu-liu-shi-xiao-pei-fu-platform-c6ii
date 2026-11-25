@@ -12,8 +12,8 @@
 | M2 领域整理 | 解析字段与单位，隔离不满足前置条件的行 | `POST /api/stages/prepare` | `app/domain/prepare.py` | `tests/test_prepare.py` |
 | M3 核心计算 | 执行项目核心规则并生成可比指标 | `POST /api/stages/calculate` | `app/domain/calculate.py` | `tests/test_calculate.py` |
 | M4 规则判定 | 给出通过、复核或阻断结论 | `POST /api/stages/decision` | `app/domain/decision.py` | `tests/test_decision.py` |
-| M5 运行对账 | 核对来源行、采信、隔离、重复与计算条目 | `POST /api/stages/reconcile` | `app/reconcile/ledger.py` | `tests/test_reconcile.py` |
-| M6 批次复核 | 带版本号签发或暂缓，拒绝陈旧复核 | `POST /api/runs/{id}/review` | `app/review/service.py` | `tests/test_review.py` |
+| M5 运行对账 | 核对来源行、采信、隔离、无效暂停、重复与入账并逐桶对平 | `POST /api/stages/reconcile` | `app/reconcile/ledger.py` | `tests/test_reconcile.py` |
+| M6 批次复核 | 带版本号签发或暂缓，拒绝陈旧复核；凭据补齐时草稿重算、签发冻结 | `POST /api/runs/{id}/review`、`POST /api/runs/{id}/credentials` | `app/review/service.py` | `tests/test_review.py`、`tests/test_batches.py` |
 | M7 证据交付 | 仅在签发后输出可校验的复核证据 | `GET /api/runs/{id}/evidence` | `app/evidence/render.py` | `tests/test_evidence.py` |
 
 ## 输入陷阱
@@ -35,4 +35,4 @@
 
 ## 深度边界
 
-采信层区分编码、重复表头、列数、空值、全角字符、前导零与冲突重复；整理层负责单位和字段边界；计算层执行核心规则；判定层保留原因码；对账层要求来源行等于采信、隔离、重复和忽略之和；复核层使用版本号阻止陈旧签发。
+采信层区分编码、重复表头、列数、空值、全角字符、前导零与冲突重复；整理层负责单位和字段边界，并用暂停凭据覆盖声明时长；计算层执行核心规则；判定层保留原因码；对账层要求来源行等于重复、忽略、采信隔离、无效暂停、其他隔离与入账之和；复核层使用版本号阻止陈旧签发，并在签发后冻结金额、来源摘要与计算版本，凭据补录只重算未签发批次。

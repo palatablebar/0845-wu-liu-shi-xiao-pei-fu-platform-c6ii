@@ -46,12 +46,39 @@
   function renderLedger(data) {
     if (!data.ledger) { $('ledger-list').innerHTML = '<p class="empty">运行对账后显示</p>'; return; }
     var values = data.ledger;
+    var counts = values.counts;
     $('ledger-list').innerHTML = [
-      ['来源行', values.counts.input], ['采信行', values.counts.accepted], ['隔离行', values.counts.isolated],
-      ['精确重复', values.counts.duplicates], ['忽略行', values.counts.ignored], ['计算条目', values.counts.computed]
+      ['来源行', counts.input], ['采信行', counts.accepted], ['隔离行', counts.isolated],
+      ['精确重复', counts.duplicates], ['忽略行', counts.ignored], ['无效暂停行', counts.invalid_pause || 0],
+      ['其他整理隔离', counts.prepare_other || 0],
+      ['入账行', counts.posted != null ? counts.posted : (counts.computed || 0)]
     ].map(function (row) { return '<div class="ledger-row"><span>' + row[0] + '</span><strong>' + row[1] + '</strong></div>'; }).join('') +
       '<div class="ledger-row"><span>' + esc(values.metric_field) + '</span><strong>' + esc(values.metric_total) + '</strong></div>' +
-      values.checks.map(function (check) { return '<div class="ledger-row"><span>' + esc(check.label) + '</span><strong class="' + (check.ok ? 'check-ok' : 'check-bad') + '">' + (check.ok ? '通过' : '异常') + '</strong></div>'; }).join('');
+      values.checks.map(function (check) {
+        return '<div class="ledger-row" title="' + esc(check.detail || '') + '"><span>' + esc(check.label) + '</span><strong class="' + (check.ok ? 'check-ok' : 'check-bad') + '">' + (check.ok ? '通过' : '异常') + '</strong></div>';
+      }).join('');
+  }
+  function shortDigest(value) {
+    return value ? String(value).slice(0, 12) : '--';
+  }
+  function renderVersion(data) {
+    var source = data.source || {};
+    var calc = data.calculation || {};
+    var paused = (source.pauses || []).map(function (item) { return item.waybill_id + ':' + item.paused_hours; }).join(' ');
+    var invalid = (source.invalid_pauses || []).map(function (item) { return item.waybill_id + '(' + item.code + ')'; }).join(' ');
+    $('version-list').innerHTML = [
+      ['来源摘要', '<code title="' + esc(source.digest) + '">' + esc(shortDigest(data.source_digest || source.digest)) + '</code>'],
+      ['文件摘要', '<code title="' + esc(source.sha256) + '">' + esc(shortDigest(source.sha256)) + '</code>'],
+      ['计算版本', '<code>' + esc(data.calc_version || calc.version || '--') + '</code>'],
+      ['计算代次', calc.generation != null ? calc.generation : (data.generation != null ? data.generation : '--')],
+      ['规则口径', esc(calc.algorithm || '--')],
+      ['有效暂停', source.pause_valid != null ? source.pause_valid + ' 条 ' + esc(paused) : '--'],
+      ['无效暂停', source.pause_invalid != null ? source.pause_invalid + ' 条 ' + esc(invalid) : '--']
+    ].map(function (row) { return '<div class="ledger-row"><span>' + row[0] + '</span><strong>' + row[1] + '</strong></div>'; }).join('');
+    var frozen = data.frozen || data.status === 'APPROVED';
+    var label = frozen ? '已签发冻结' : (data.status === 'HELD' ? '已暂缓' : '草稿');
+    $('freeze-state').textContent = label;
+    $('freeze-state').className = 'hint ' + (frozen ? 'check-ok' : '');
   }
   function render(data) {
     state.payload = data;
@@ -63,6 +90,7 @@
     renderRows(data);
     renderIssues(data);
     renderLedger(data);
+    renderVersion(data);
     window.renderChart($('chart'), data.chart && data.chart.length ? (state.kind || 'bars') : 'bars', data.chart || []);
   }
   function stageButtons(stages) {
@@ -85,22 +113,60 @@
     } catch (error) { setNotice(error.message); }
     finally { document.body.removeAttribute('aria-busy'); }
   }
+  function parseCredentials() {
+    var text = ($('credential').value || '').trim();
+    if (!text) return null;
+    var out = {};
+    text.split(/[,，\n]+/).forEach(function (part) {
+      var pair = part.split(/[:：]/);
+      var key = (pair[0] || '').trim();
+      if (!key) return;
+      out[key] = (pair[1] || '').trim();
+    });
+    return out;
+  }
+  function applyRunState(run) {
+    state.run = run;
+    state.approved = run.status === 'APPROVED';
+    render(run);
+    $('run-status').textContent = run.status + ' · rev ' + run.revision + (run.generation ? ' · 代次 ' + run.generation : '');
+    $('revision').textContent = 'rev ' + run.revision;
+    $('sign').disabled = state.approved || (run.blockers && run.blockers.length > 0);
+    $('hold').disabled = state.approved;
+    $('credential-apply').disabled = state.approved;
+    $('download').hidden = !state.approved;
+    if (state.approved) $('download').href = '/api/runs/' + run.run_id + '/evidence';
+  }
   async function runBatch() {
     try {
       setNotice('');
       $('run').disabled = true;
-      var run = await request('/api/runs', {method: 'POST', body: JSON.stringify({profile: $('profile').value})});
-      state.run = run;
-      state.approved = run.status === 'APPROVED';
-      render(run);
-      $('run-status').textContent = run.status + ' · rev ' + run.revision;
-      $('revision').textContent = 'rev ' + run.revision;
-      $('sign').disabled = run.summary.REJECT > 0 || state.approved;
-      $('hold').disabled = state.approved;
-      $('download').hidden = !state.approved;
-      if (state.approved) $('download').href = '/api/runs/' + run.run_id + '/evidence';
+      var body = {profile: $('profile').value};
+      var credentials = parseCredentials();
+      if (credentials) body.credentials = credentials;
+      var run = await request('/api/runs', {method: 'POST', body: JSON.stringify(body)});
+      applyRunState(run);
+      if (run.revalidated) setNotice('来源变化，草稿已重算至代次 ' + run.generation);
+      else if (run.frozen) setNotice('该来源已签发，沿用原金额与来源摘要');
     } catch (error) { setNotice(error.message); }
     finally { $('run').disabled = false; }
+  }
+  async function addCredentials() {
+    if (!state.run) return;
+    var credentials = parseCredentials();
+    if (!credentials) { setNotice('请填写暂停凭据'); return; }
+    try {
+      setNotice('');
+      $('credential-apply').disabled = true;
+      var result = await request('/api/runs/' + state.run.run_id + '/credentials', {
+        method: 'POST', body: JSON.stringify({credentials: credentials})
+      });
+      applyRunState(result.run);
+      if (result.recalculated) setNotice('凭据补齐，来源变化，草稿重算至代次 ' + result.run.generation);
+      else if (result.reason === 'SIGNED_FROZEN') setNotice('批次已签发，保留原金额与来源摘要');
+      else setNotice('凭据未改变来源摘要，沿用当前版本');
+    } catch (error) { setNotice(error.message); }
+    finally { $('credential-apply').disabled = state.approved; }
   }
   async function review(decision) {
     if (!state.run) return;
@@ -109,14 +175,9 @@
         method: 'POST',
         body: JSON.stringify({decision: decision, comment: $('comment').value, expected_revision: state.run.revision})
       });
-      state.run = run;
-      state.approved = run.status === 'APPROVED';
-      $('run-status').textContent = run.status + ' · rev ' + run.revision;
-      $('revision').textContent = 'rev ' + run.revision;
+      applyRunState(run);
       $('sign').disabled = true;
       $('hold').disabled = true;
-      $('download').hidden = !state.approved;
-      if (state.approved) $('download').href = '/api/runs/' + run.run_id + '/evidence';
     } catch (error) { setNotice(error.message); }
   }
   async function boot() {
@@ -130,11 +191,13 @@
       await loadStage('intake');
     } catch (error) { setNotice(error.message); }
     $('run').addEventListener('click', runBatch);
+    $('credential-apply').addEventListener('click', addCredentials);
     $('sign').addEventListener('click', function () { review('APPROVED'); });
     $('hold').addEventListener('click', function () { review('HELD'); });
     $('profile').addEventListener('change', function () {
       state.run = null; state.approved = false;
-      $('sign').disabled = true; $('hold').disabled = true; $('download').hidden = true;
+      $('sign').disabled = true; $('hold').disabled = true; $('credential-apply').disabled = true;
+      $('download').hidden = true;
       $('run-status').textContent = '未执行批次'; $('revision').textContent = 'rev 0';
       loadStage('intake');
     });

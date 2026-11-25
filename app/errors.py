@@ -18,6 +18,13 @@ MESSAGES = {
     "GATE_BLOCKED": "存在阻断项，不能签发",
     "NOT_APPROVED": "批次尚未签发",
     "BAD_REQUEST": "请求内容不完整",
+    "REJECT_ROWS": "存在阻断项，不能签发",
+    "LEDGER_UNBALANCED": "来源行、隔离行、无效暂停行与入账行未对平，不能签发",
+    "SOURCE_DIGEST_MISSING": "缺少来源摘要，不能签发",
+    "PAUSE_DIGEST_MISSING": "缺少暂停凭据摘要，不能签发",
+    "CALCULATION_VERSION_MISSING": "缺少计算版本，不能签发",
+    "SIGNED_FROZEN": "批次已签发，保留原金额与来源摘要",
+    "SOURCE_CHANGED": "来源数据变化，已重算",
 }
 
 
@@ -30,4 +37,9 @@ class DomainIssue(Exception):
 
 
 def error_response(exc: DomainIssue):
-    return jsonify(error=exc.detail or MESSAGES.get(exc.code, "请求无法处理"), code=exc.code), exc.status
+    message = exc.detail or MESSAGES.get(exc.code, "请求无法处理")
+    # 签发阻断的 detail 是原因码集合：优先转成可读文案，同时把原因码留在响应里。
+    reasons = [part for part in str(message).split(",") if part]
+    if exc.code == "GATE_BLOCKED" and all(part in MESSAGES for part in reasons):
+        return jsonify(error=MESSAGES[reasons[0]], code=exc.code, reasons=reasons), exc.status
+    return jsonify(error=message, code=exc.code), exc.status

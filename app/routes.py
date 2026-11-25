@@ -4,7 +4,7 @@ from app.catalog import SPEC
 from app.config import SAMPLES
 from app.errors import DomainIssue
 from app.evidence.render import render
-from app.review.service import approve, create_run, serialize
+from app.review.service import add_credentials, approve, create_run, serialize
 from app.service import pipeline
 
 
@@ -35,15 +35,14 @@ def stage(stage_id):
     data = request.get_json(silent=True) or {}
     profile = data.get("profile", "dirty")
     upto = SPEC["stages"][STAGE_INDEX[stage_id] - 1]
-    return jsonify(pipeline(profile, upto=upto))
+    return jsonify(pipeline(profile, upto=upto, pauses=data.get("credentials")))
 
 
 @api.post("/api/runs")
 def create():
     data = request.get_json(silent=True) or {}
     profile = data.get("profile", "dirty")
-    payload = pipeline(profile)
-    return jsonify(create_run(store(), payload))
+    return jsonify(create_run(store(), profile, data.get("credentials")))
 
 
 @api.get("/api/runs/<run_id>")
@@ -52,6 +51,14 @@ def get_run(run_id):
     if not run:
         raise DomainIssue("RUN_NOT_FOUND", 404)
     return jsonify(run)
+
+
+@api.post("/api/runs/<run_id>/credentials")
+def credentials(run_id):
+    data = request.get_json(silent=True) or {}
+    if "credentials" not in data:
+        raise DomainIssue("BAD_REQUEST")
+    return jsonify(add_credentials(store(), run_id, data["credentials"]))
 
 
 @api.post("/api/runs/<run_id>/review")
@@ -65,6 +72,8 @@ def review(run_id):
 @api.get("/api/runs/<run_id>/evidence")
 def evidence(run_id):
     run = serialize(store().get(run_id))
+    if run is None:
+        raise DomainIssue("RUN_NOT_FOUND", 404)
     return jsonify(render(run))
 
 
